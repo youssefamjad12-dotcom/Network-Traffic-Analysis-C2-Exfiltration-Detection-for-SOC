@@ -1,0 +1,11 @@
+851bf02112458d234ceb82c2cef033623c2aa4ebb44a0a246c08afac8ccf499a  shell.php
+f274bc4563d74e09be922d3fd5c51c30e0c704f2ae52848cab9d31809741346e  payload_4444_stream3619.dll.bin
+915e6ca939e2f1f2267736af266195d290d5f999989f7e6c18525128d29fa16f  payload_4444_stream3621.dll.bin
+
+# Capture files (for chain of custody)
+afd37fce6a969c8296a1de80e99fae1950311592842475f197f07b435dd9f84e  webshell.pcap
+e1805ef0e8a79461e78c9a3fdbfd68b3bba7f7949d9d51d39c9352f60030d292  nmap.pcap
+2f6c120689aa0888fe5a40639893457aa60e896b3eded413d625bb36fc602911  C2+DGA-ether.pcap
+
+# WARNING: the two .dll.bin files are inert extracted bytes of malware.
+# Do not execute, do not load, do not copy to a Windows host without a sandbox.

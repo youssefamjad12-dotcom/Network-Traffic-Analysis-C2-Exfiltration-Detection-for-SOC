@@ -1,0 +1,30 @@
+type,value,context,first_seen_utc,last_seen_utc,confidence,notes
+ipv4,192.168.1.1,web shell client (attacker),2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,MAC 00:50:56:c0:00:01 (VMware virtual adapter)
+ipv4,192.168.1.128,web shell victim / wazuh-server ens33,2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,Apache 2.4.66 Ubuntu; Blackstone Technologies app; MAC 00:0c:29:52:c7:8b
+ipv4,172.16.173.138,same victim ens36 / nmap target,2026-11-07T19:41:04Z,2026-11-07T19:47:27Z,Confirmed,MAC 00:0c:29:52:c7:95
+ipv4,172.16.173.1,nmap scanner,2026-11-07T19:41:04Z,2026-11-07T19:47:27Z,Confirmed,MAC 00:50:56:c0:00:08
+ipv4,192.168.1.13,C2 payload host / DGA host / browsing endpoint,2026-11-06T22:07:09Z,2026-11-06T22:20:42Z,Confirmed,shared MAC 62:11:48:63:66:0f with 192.168.1.120
+ipv4,192.168.1.120,C2 client / DGA source / scanned host,2026-11-06T22:07:09Z,2026-11-06T22:20:42Z,Confirmed,shared MAC 62:11:48:63:66:0f with 192.168.1.13
+ipv4,102.132.97.54,long-lived TLS/1.2 session on 443,2026-11-06T22:07:17Z,2026-11-06T22:20:30Z,Possible,no SNI/certificate visible; could be a messenger/push app
+domain,c2.dga-lab.com,failed C2 rendezvous (NXDOMAIN),2026-11-06T22:09:28Z,2026-11-06T22:09:53Z,Confirmed,queried twice 25.3 s apart from 192.168.1.13
+domain,akfjqweklzx.com,DGA domain,2026-11-06T22:18:46Z,2026-11-06T22:18:47Z,Confirmed,NXDOMAIN; sent directly to 8.8.8.8
+domain,pqowieurtyx.net,DGA domain,2026-11-06T22:18:47Z,2026-11-06T22:18:48Z,Confirmed,NXDOMAIN; sent directly to 8.8.8.8
+domain,zmxncbvalkj.org,DGA domain,2026-11-06T22:18:47Z,2026-11-06T22:18:50Z,Confirmed,NXDOMAIN; sent directly to 8.8.8.8
+domain,asdfghjklqwe.com,DGA domain,2026-11-06T22:18:51Z,2026-11-06T22:18:52Z,Confirmed,NODATA - rcode 0 with empty answer; sent directly to 8.8.8.8
+domain,gator.volces.com.230b2a2545cfa773.queniuck.com,DNS search-suffix leak (benign look-alike),2026-11-06T22:07:49Z,2026-11-06T22:20:17Z,Benign,type-65 queries about every 61 s; legit ByteDance telemetry name with appended suffix
+url,http://192.168.1.128/upload.php,upload form used for the web shell,2026-11-08T09:29:41Z,2026-11-08T09:29:41Z,Confirmed,POST multipart 504 bytes with valid CSRF token
+url,http://192.168.1.128/uploads/shell.php?cmd=,web shell command endpoint,2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,15 commands executed
+uri,/uploads/exploit.php,earlier web shell on disk,2026-11-08T09:02:00Z,2026-11-08T09:02:00Z,Confirmed,223 bytes; observed only in directory listing
+uri,/uploads/shell.php,uploaded web shell on disk,2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,135 bytes
+tcp_port,4444,stage-2 payload delivery (server 192.168.1.13),2026-11-06T22:11:41Z,2026-11-06T22:12:19Z,Confirmed,4-byte length prefix + 255676-byte PE DLL
+sha256,851bf02112458d234ceb82c2cef033623c2aa4ebb44a0a246c08afac8ccf499a,shell.php body,2026-11-08T09:29:41Z,2026-11-08T09:29:41Z,Confirmed,135 bytes
+sha256,f274bc4563d74e09be922d3fd5c51c30e0c704f2ae52848cab9d31809741346e,stage-2 DLL (stream 3619),2026-11-06T22:12:27Z,2026-11-06T22:12:50Z,Confirmed,PE32+ DLL export server.dll
+sha256,915e6ca939e2f1f2267736af266195d290d5f999989f7e6c18525128d29fa16f,stage-2 DLL (stream 3621),2026-11-06T22:13:05Z,2026-11-06T22:13:44Z,Confirmed,PE32+ DLL export server.dll
+file_string,MZARUH,packer stub of delivered DLL,2026-11-06T22:12:27Z,2026-11-06T22:13:44Z,Likely,UPX 4.x-family stub with modified/absent UPX! marker
+file_string,server.dll,export name of delivered DLL,2026-11-06T22:12:27Z,2026-11-06T22:13:44Z,Confirmed,
+user_agent,curl/8.5.0,web shell client,2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,all 17 HTTP requests
+user_agent,Mozilla/5.0 (compatible; Nmap Scripting Engine; https://nmap.org/book/nse.html),NSE scanning phase,2026-11-07T19:47:15Z,2026-11-07T19:47:27Z,Confirmed,
+session,PHPSESSID=4f21e6caa9f18e454c2f4f9eead6e277,attacker session on the web app,2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,
+csrf,d985dd65f4e8a1dc18f2f3b2cd3f128c068b4979efc4545e9082252df52b8503,CSRF token reused in the upload POST,2026-11-08T09:29:41Z,2026-11-08T09:29:41Z,Confirmed,session-specific token
+hostname,wazuh-server,compromised host,2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,
+account,www-data,web shell execution context (uid 33),2026-11-08T09:29:41Z,2026-11-08T09:29:45Z,Confirmed,
